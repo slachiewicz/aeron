@@ -24,6 +24,7 @@ import io.aeron.test.SystemTestWatcher;
 import io.aeron.test.Tests;
 import io.aeron.test.driver.TestMediaDriver;
 import org.agrona.CloseHelper;
+import org.agrona.Strings;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -233,11 +234,11 @@ class SourceSpecificMulticastTest
 
         final String configuredSource = System.getenv(IPV6_SOURCE_ENV_VAR);
         assumeFalse(
-            null == configuredSource && OS.current() == OS.LINUX,
+            Strings.isEmpty(configuredSource) && OS.current() == OS.LINUX,
             "Linux does not loop IPv6 multicast back on the loopback interface, set " + IPV6_SOURCE_ENV_VAR +
             " to the IPv6 address of a multicast capable interface");
 
-        final String source = null == configuredSource ? "::1" : configuredSource;
+        final String source = Strings.isEmpty(configuredSource) ? "::1" : configuredSource;
         final String uri = "aeron:udp?endpoint=[ff3e::8000:1]:20220|control=[" + source + "]:20221";
 
         try (Publication pub = aeron.addPublication(uri, STREAM_ID);
