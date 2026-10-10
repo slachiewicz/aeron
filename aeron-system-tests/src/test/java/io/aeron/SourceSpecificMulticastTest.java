@@ -234,9 +234,9 @@ class SourceSpecificMulticastTest
 
         final String configuredSource = System.getenv(IPV6_SOURCE_ENV_VAR);
         assumeFalse(
-            Strings.isEmpty(configuredSource) && OS.current() == OS.LINUX,
-            "Linux does not loop IPv6 multicast back on the loopback interface, set " + IPV6_SOURCE_ENV_VAR +
-            " to the IPv6 address of a multicast capable interface");
+            Strings.isEmpty(configuredSource) && (OS.current() == OS.LINUX || OS.current() == OS.WINDOWS),
+            "IPv6 multicast does not work over the loopback interface on Linux or Windows, set " +
+            IPV6_SOURCE_ENV_VAR + " to the IPv6 address of a multicast capable interface");
 
         final String source = Strings.isEmpty(configuredSource) ? "::1" : configuredSource;
         final String uri = "aeron:udp?endpoint=[ff3e::8000:1]:20220|control=[" + source + "]:20221";
