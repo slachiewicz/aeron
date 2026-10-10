@@ -37,6 +37,7 @@ import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.PortUnreachableException;
 import java.net.StandardSocketOptions;
@@ -220,9 +221,7 @@ public abstract class UdpChannelTransport implements AutoCloseable
                     receiveDatagramChannel = DatagramChannel.open(udpChannel.protocolFamily());
                 }
 
-                receiveDatagramChannel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
-                receiveDatagramChannel.bind(new InetSocketAddress(endPointAddress.getPort()));
-                receiveDatagramChannel.join(endPointAddress.getAddress(), udpChannel.localInterface());
+                bindMulticast();
                 sendDatagramChannel.setOption(StandardSocketOptions.IP_MULTICAST_IF, udpChannel.localInterface());
 
                 if (udpChannel.hasMulticastTtl())
@@ -285,6 +284,35 @@ public abstract class UdpChannelTransport implements AutoCloseable
                 " (at " + ex.getStackTrace()[0].toString() + "): " + udpChannel.originalUriString();
 
             throw new AeronException(message, ex);
+        }
+    }
+
+    private void bindMulticast() throws IOException
+    {
+        if (udpChannel.isSourceSpecific() && !endPointAddress.getAddress().isMulticastAddress())
+        {
+            // Source-specific publication: control is received on an exclusive unicast socket and data is sent
+            // from the source address so subscribers joined to (source, group) accept it.
+            receiveDatagramChannel.bind(endPointAddress);
+            if (sendDatagramChannel != receiveDatagramChannel)
+            {
+                sendDatagramChannel.bind(new InetSocketAddress(udpChannel.sourceAddress(), 0));
+            }
+        }
+        else
+        {
+            receiveDatagramChannel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
+            receiveDatagramChannel.bind(new InetSocketAddress(endPointAddress.getPort()));
+
+            if (udpChannel.isSourceSpecific())
+            {
+                receiveDatagramChannel.join(
+                    endPointAddress.getAddress(), udpChannel.localInterface(), udpChannel.sourceAddress());
+            }
+            else
+            {
+                receiveDatagramChannel.join(endPointAddress.getAddress(), udpChannel.localInterface());
+            }
         }
     }
 
@@ -364,6 +392,25 @@ public abstract class UdpChannelTransport implements AutoCloseable
     public boolean isMulticast()
     {
         return udpChannel.isMulticast();
+    }
+
+    /**
+     * Is the frame from the source of a source-specific multicast channel. Always true for other channels. The
+     * operating system filters by source as well; this guards against frames which get past it.
+     *
+     * @param srcAddress the frame was received from.
+     * @return true if the frame should be processed otherwise false.
+     */
+    public boolean isValidSource(final InetSocketAddress srcAddress)
+    {
+        final InetAddress sourceAddress = udpChannel.sourceAddress();
+        if (null == sourceAddress || sourceAddress.equals(srcAddress.getAddress()))
+        {
+            return true;
+        }
+
+        invalidPackets.increment();
+        return false;
     }
 
     /**

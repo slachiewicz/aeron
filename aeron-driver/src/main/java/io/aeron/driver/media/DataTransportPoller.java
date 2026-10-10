@@ -229,7 +229,8 @@ public final class DataTransportPoller extends UdpTransportPoller
             totalBytesReceived += length;
             final ReceiveChannelEndpoint channelEndpoint = channelAndTransport.channelEndpoint;
 
-            if (channelEndpoint.isValidFrame(unsafeBuffer, length))
+            if (channelEndpoint.isValidFrame(unsafeBuffer, length) &&
+                channelAndTransport.transport.isValidSource(srcAddress))
             {
                 channelEndpoint.receiveHook(unsafeBuffer, length, srcAddress);
 
