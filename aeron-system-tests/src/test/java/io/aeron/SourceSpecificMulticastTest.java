@@ -222,13 +222,13 @@ class SourceSpecificMulticastTest
 
     @Test
     @InterruptAfter(10)
-    void shouldConnectAndExchangeMessagesOverIPv6() throws Exception
+    void shouldConnectAndExchangeMessagesOverIPv6()
     {
-        assumeTrue(
-            null != NetworkInterface.getByInetAddress(InetAddress.getByName("::1")), "::1 is not a local address");
-        assumeFalse(
-            !TestMediaDriver.shouldRunCMediaDriver() && OS.current() == OS.MAC,
-            "the JDK does not support IPv6 source-specific multicast on macOS");
+        if (!TestMediaDriver.shouldRunCMediaDriver())
+        {
+            assumeFalse("true".equals(System.getProperty("java.net.preferIPv4Stack")), "IPv4 stack preferred");
+            assumeFalse(OS.current() == OS.MAC, "the JDK does not support IPv6 source-specific multicast on macOS");
+        }
 
         final String uri = "aeron:udp?endpoint=[ff3e::8000:1]:20220|control=[::1]:20221";
 
