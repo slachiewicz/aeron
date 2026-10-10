@@ -52,6 +52,7 @@ class SourceSpecificMulticastTest
     private static final String GROUP = "232.1.1.1:20200";
     private static final String SSM_URI_A = "aeron:udp?endpoint=" + GROUP + "|control=127.0.0.1:20201";
     private static final String SSM_URI_B = "aeron:udp?endpoint=" + GROUP + "|control=127.0.0.2:20202";
+    private static final String IPV6_SOURCE_ENV_VAR = "AERON_TEST_SSM_IPV6_SOURCE";
 
     @RegisterExtension
     final SystemTestWatcher watcher = new SystemTestWatcher();
@@ -230,7 +231,14 @@ class SourceSpecificMulticastTest
             assumeFalse(OS.current() == OS.MAC, "the JDK does not support IPv6 source-specific multicast on macOS");
         }
 
-        final String uri = "aeron:udp?endpoint=[ff3e::8000:1]:20220|control=[::1]:20221";
+        final String configuredSource = System.getenv(IPV6_SOURCE_ENV_VAR);
+        assumeFalse(
+            null == configuredSource && OS.current() == OS.LINUX,
+            "Linux does not loop IPv6 multicast back on the loopback interface, set " + IPV6_SOURCE_ENV_VAR +
+            " to the IPv6 address of a multicast capable interface");
+
+        final String source = null == configuredSource ? "::1" : configuredSource;
+        final String uri = "aeron:udp?endpoint=[ff3e::8000:1]:20220|control=[" + source + "]:20221";
 
         try (Publication pub = aeron.addPublication(uri, STREAM_ID);
             Subscription sub = aeron.addSubscription(uri, STREAM_ID))
