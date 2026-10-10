@@ -129,6 +129,8 @@ int aeron_receive_destination_create(
     }
 
     _destination->has_control_addr = destination_channel->is_multicast || destination_channel->has_explicit_control;
+    _destination->is_source_specific = destination_channel->is_source_specific;
+    memcpy(&_destination->source_addr, &destination_channel->source_addr, sizeof(_destination->source_addr));
 
     aeron_counter_set_release(
         _destination->local_sockaddr_indicator.value_addr, AERON_COUNTER_CHANNEL_ENDPOINT_STATUS_ACTIVE);
