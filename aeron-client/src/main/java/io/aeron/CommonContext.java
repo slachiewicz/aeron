@@ -419,6 +419,14 @@ public class CommonContext implements Cloneable
     public static final String SOCKET_TOS_PARAM_NAME = "so-tos";
 
     /**
+     * Parameter name for the source address of a source-specific multicast (SSM) subscription. Only valid on a
+     * multicast channel which also has an explicit control address. Defaults to the host of the control address.
+     *
+     * @see #MDC_CONTROL_PARAM_NAME
+     */
+    public static final String SOURCE_PARAM_NAME = "source";
+
+    /**
      * Parameter name for the congestion control's initial receiver window length.
      */
     public static final String RECEIVER_WINDOW_LENGTH_PARAM_NAME = "rcv-wnd";

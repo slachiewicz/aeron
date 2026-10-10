@@ -153,6 +153,20 @@ class ChannelUriStringBuilderTest
     }
 
     @Test
+    void shouldGenerateAndCopySourceSpecificMulticastChannel()
+    {
+        final String uri = "aeron:udp?endpoint=232.1.1.1:40456|control=10.0.0.1:40457|source=10.0.0.2";
+        final ChannelUriStringBuilder builder = new ChannelUriStringBuilder()
+            .media("udp")
+            .endpoint("232.1.1.1:40456")
+            .controlEndpoint("10.0.0.1:40457")
+            .source("10.0.0.2");
+
+        assertEquals(uri, builder.build());
+        assertEquals("10.0.0.2", new ChannelUriStringBuilder(ChannelUri.parse(uri)).source());
+    }
+
+    @Test
     void shouldGenerateChannelWithReceiverWindow()
     {
         final ChannelUriStringBuilder builder = new ChannelUriStringBuilder()

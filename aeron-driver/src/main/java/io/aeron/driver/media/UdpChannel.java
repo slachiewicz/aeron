@@ -23,7 +23,9 @@ import io.aeron.driver.exceptions.InvalidChannelException;
 import org.agrona.BitUtil;
 import org.agrona.SystemUtil;
 
+import java.io.IOException;
 import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.ProtocolFamily;
@@ -47,6 +49,7 @@ import static io.aeron.CommonContext.RESERVED_OFFSET;
 import static io.aeron.CommonContext.SOCKET_RCVBUF_PARAM_NAME;
 import static io.aeron.CommonContext.SOCKET_SNDBUF_PARAM_NAME;
 import static io.aeron.CommonContext.SOCKET_TOS_PARAM_NAME;
+import static io.aeron.CommonContext.SOURCE_PARAM_NAME;
 import static io.aeron.CommonContext.TTL_PARAM_NAME;
 import static io.aeron.driver.Configuration.SOCKET_TOS_DEFAULT;
 import static io.aeron.driver.media.NetworkUtil.formatAddressAndPort;
@@ -86,6 +89,7 @@ public final class UdpChannel
     private final InetSocketAddress localData;
     private final InetSocketAddress remoteControl;
     private final InetSocketAddress localControl;
+    private final InetAddress sourceAddress;
     private final String uriStr;
     private final String canonicalForm;
     private final NetworkInterface localInterface;
@@ -110,6 +114,7 @@ public final class UdpChannel
         localData = context.localData;
         remoteControl = context.remoteControl;
         localControl = context.localControl;
+        sourceAddress = context.sourceAddress;
         uriStr = context.uriStr;
         canonicalForm = context.canonicalForm;
         localInterface = context.localInterface;
@@ -245,21 +250,47 @@ public final class UdpChannel
                 context.hasTagId(true).tagId(Long.parseLong(tagIdStr));
             }
 
+            if (null != channelUri.get(SOURCE_PARAM_NAME) && !endpointAddress.getAddress().isMulticastAddress())
+            {
+                throw new IllegalArgumentException(
+                    SOURCE_PARAM_NAME + " requires a multicast endpoint and control: " + channelUriString);
+            }
+
             if (endpointAddress.getAddress().isMulticastAddress())
             {
-                final UnresolvedInterface unresolvedInterface = getInterface(channelUri);
-                final ResolvedInterface resolvedInterface = unresolvedInterface.resolve(true, protocolFamily);
-                final NetworkInterface localInterface = resolvedInterface.localInterface();
-                final InetSocketAddress resolvedAddress = resolvedInterface.address();
+                if (null != controlAddress)
+                {
+                    parseSourceSpecificMulticast(
+                        channelUri,
+                        nameResolver,
+                        controlMode,
+                        endpointAddress,
+                        controlAddress,
+                        protocolFamily,
+                        context);
+                }
+                else
+                {
+                    if (null != channelUri.get(SOURCE_PARAM_NAME))
+                    {
+                        throw new IllegalArgumentException(
+                            SOURCE_PARAM_NAME + " requires a multicast endpoint and control: " + channelUriString);
+                    }
 
-                context
-                    .isMulticast(true)
-                    .remoteControlAddress(getMulticastControlAddress(endpointAddress))
-                    .remoteDataAddress(endpointAddress)
-                    .localControlAddress(resolvedAddress)
-                    .localDataAddress(resolvedAddress)
-                    .localInterface(localInterface)
-                    .canonicalForm(canonicalise(null, resolvedAddress, null, endpointAddress));
+                    final UnresolvedInterface unresolvedInterface = getInterface(channelUri);
+                    final ResolvedInterface resolvedInterface = unresolvedInterface.resolve(true, protocolFamily);
+                    final NetworkInterface localInterface = resolvedInterface.localInterface();
+                    final InetSocketAddress resolvedAddress = resolvedInterface.address();
+
+                    context
+                        .isMulticast(true)
+                        .remoteControlAddress(getMulticastControlAddress(endpointAddress))
+                        .remoteDataAddress(endpointAddress)
+                        .localControlAddress(resolvedAddress)
+                        .localDataAddress(resolvedAddress)
+                        .localInterface(localInterface)
+                        .canonicalForm(canonicalise(null, resolvedAddress, null, endpointAddress));
+                }
 
                 final String ttlValue = channelUri.get(TTL_PARAM_NAME);
                 if (null != ttlValue)
@@ -530,6 +561,29 @@ public final class UdpChannel
     public InetSocketAddress localControl()
     {
         return localControl;
+    }
+
+    /**
+     * Is this a source-specific multicast (SSM) channel, i.e. a multicast endpoint with an explicit control address.
+     *
+     * @return true if this is a source-specific multicast channel.
+     * @see #sourceAddress()
+     */
+    public boolean isSourceSpecific()
+    {
+        return null != sourceAddress;
+    }
+
+    /**
+     * The source address of a source-specific multicast (SSM) channel. Publications send from it and subscriptions
+     * join the group for it only.
+     *
+     * @return the source address or null if not a source-specific multicast channel.
+     * @see #isSourceSpecific()
+     */
+    public InetAddress sourceAddress()
+    {
+        return sourceAddress;
     }
 
     /**
@@ -875,7 +929,8 @@ public final class UdpChannel
         return isWildcard() || remoteData().getAddress().equals(otherRemoteData.getAddress()) &&
             remoteData().getPort() == otherRemoteData.getPort() &&
             localData().getAddress().equals(otherLocalData.getAddress()) &&
-            localData().getPort() == otherLocalData.getPort();
+            localData().getPort() == otherLocalData.getPort() &&
+            Objects.equals(sourceAddress, udpChannel.sourceAddress);
     }
 
     /**
@@ -1055,6 +1110,95 @@ public final class UdpChannel
         return new InetSocketAddress(getByAddress(addressAsBytes), endpointAddress.getPort());
     }
 
+    private static void parseSourceSpecificMulticast(
+        final ChannelUri channelUri,
+        final NameResolver nameResolver,
+        final ControlMode controlMode,
+        final InetSocketAddress endpointAddress,
+        final InetSocketAddress controlAddress,
+        final ProtocolFamily protocolFamily,
+        final Context context) throws IOException
+    {
+        final String uriStr = channelUri.toString();
+        if (ControlMode.NONE != controlMode)
+        {
+            throw new IllegalArgumentException(
+                MDC_CONTROL_MODE_PARAM_NAME + " is not supported with a multicast endpoint: " + uriStr);
+        }
+
+        final InetAddress control = controlAddress.getAddress();
+        if (control.isMulticastAddress() || control.isAnyLocalAddress() || 0 == controlAddress.getPort())
+        {
+            throw new IllegalArgumentException(
+                MDC_CONTROL_PARAM_NAME + " must be a unicast address and port for a multicast endpoint: " + uriStr);
+        }
+
+        if (getProtocolFamily(control) != protocolFamily)
+        {
+            throw new IllegalArgumentException(
+                MDC_CONTROL_PARAM_NAME + " and " + ENDPOINT_PARAM_NAME + " must be the same protocol family: " +
+                uriStr);
+        }
+
+        if (controlAddress.getPort() == endpointAddress.getPort())
+        {
+            throw new IllegalArgumentException(
+                MDC_CONTROL_PARAM_NAME + " port must differ from the multicast " + ENDPOINT_PARAM_NAME + " port: " +
+                uriStr);
+        }
+
+        final String sourceValue = channelUri.get(SOURCE_PARAM_NAME);
+        final InetAddress source = null == sourceValue ? control : resolveSource(sourceValue, nameResolver);
+        if (source.isMulticastAddress() || source.isAnyLocalAddress() || getProtocolFamily(source) != protocolFamily)
+        {
+            throw new IllegalArgumentException(
+                SOURCE_PARAM_NAME + " must be a unicast address of the same protocol family as " +
+                ENDPOINT_PARAM_NAME + ": " + uriStr);
+        }
+
+        final ResolvedInterface resolvedInterface;
+        final NetworkInterface sourceInterface = null == channelUri.get(INTERFACE_PARAM_NAME) ?
+            NetworkInterface.getByInetAddress(source) : null;
+        if (null != sourceInterface)
+        {
+            resolvedInterface = new ResolvedInterface(sourceInterface, new InetSocketAddress(source, 0));
+        }
+        else
+        {
+            resolvedInterface = getInterface(channelUri).resolve(true, protocolFamily);
+        }
+
+        final String controlVal = channelUri.get(MDC_CONTROL_PARAM_NAME);
+        final String endpointVal = channelUri.get(ENDPOINT_PARAM_NAME);
+        final String canonicalForm = canonicalise(controlVal, controlAddress, endpointVal, endpointAddress) +
+            (null == sourceValue ? "" : "-" + sourceValue);
+
+        context
+            .isMulticast(true)
+            .hasExplicitControl(true)
+            .sourceAddress(source)
+            .remoteControlAddress(controlAddress)
+            .localControlAddress(controlAddress)
+            .remoteDataAddress(endpointAddress)
+            .localDataAddress(resolvedInterface.address())
+            .localInterface(resolvedInterface.localInterface())
+            .canonicalForm(canonicalForm);
+    }
+
+    private static InetAddress resolveSource(final String sourceValue, final NameResolver nameResolver)
+        throws UnknownHostException
+    {
+        final InetAddress source = nameResolver.resolve(sourceValue, SOURCE_PARAM_NAME, false);
+        if (null == source)
+        {
+            throw new UnknownHostException(
+                "unresolved - " + SOURCE_PARAM_NAME + "=" + sourceValue +
+                ", name-resolver=" + nameResolver.getClass().getName());
+        }
+
+        return source;
+    }
+
     private static UnresolvedInterface getInterface(final ChannelUri uri) throws UnknownHostException
     {
         final String interfaceValue = uri.get(INTERFACE_PARAM_NAME);
@@ -1148,6 +1292,7 @@ public final class UdpChannel
         InetSocketAddress localData;
         InetSocketAddress remoteControl;
         InetSocketAddress localControl;
+        InetAddress sourceAddress;
         String uriStr;
         String canonicalForm;
         NetworkInterface localInterface;
@@ -1192,6 +1337,12 @@ public final class UdpChannel
         Context canonicalForm(final String canonicalForm)
         {
             this.canonicalForm = canonicalForm;
+            return this;
+        }
+
+        Context sourceAddress(final InetAddress sourceAddress)
+        {
+            this.sourceAddress = sourceAddress;
             return this;
         }
 

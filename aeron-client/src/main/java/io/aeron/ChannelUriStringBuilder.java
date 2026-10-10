@@ -73,6 +73,7 @@ public final class ChannelUriStringBuilder
     private Integer socketSndbufLength;
     private Integer socketRcvbufLength;
     private Integer socketTos;
+    private String source;
     private Integer receiverWindowLength;
     private Integer maxResend;
     private Integer streamId;
@@ -142,6 +143,7 @@ public final class ChannelUriStringBuilder
         socketRcvbufLength(channelUri);
         socketSndbufLength(channelUri);
         socketTos(channelUri);
+        source(channelUri);
         receiverWindowLength(channelUri);
         mediaReceiveTimestampOffset(channelUri);
         channelReceiveTimestampOffset(channelUri);
@@ -193,6 +195,7 @@ public final class ChannelUriStringBuilder
         socketRcvbufLength = null;
         socketSndbufLength = null;
         socketTos = null;
+        source = null;
         receiverWindowLength = null;
         mediaReceiveTimestampOffset = null;
         channelReceiveTimestampOffset = null;
@@ -1750,6 +1753,42 @@ public final class ChannelUriStringBuilder
     }
 
     /**
+     * Set the source address for a source-specific multicast (SSM) subscription.
+     *
+     * @param source address of the multicast source.
+     * @return this for a fluent API.
+     * @see CommonContext#SOURCE_PARAM_NAME
+     */
+    public ChannelUriStringBuilder source(final String source)
+    {
+        this.source = source;
+        return this;
+    }
+
+    /**
+     * Set the source address for a source-specific multicast (SSM) subscription from an existing {@link ChannelUri}.
+     *
+     * @param channelUri to read the value from.
+     * @return this for a fluent API.
+     * @see CommonContext#SOURCE_PARAM_NAME
+     */
+    public ChannelUriStringBuilder source(final ChannelUri channelUri)
+    {
+        return source(channelUri.get(SOURCE_PARAM_NAME));
+    }
+
+    /**
+     * Get the source address for a source-specific multicast (SSM) subscription.
+     *
+     * @return source address or null if not specified.
+     * @see CommonContext#SOURCE_PARAM_NAME
+     */
+    public String source()
+    {
+        return source;
+    }
+
+    /**
      * Set the underlying OS receive buffer length.
      *
      * @param socketRcvbufLength parameter to be passed as SO_RCVBUF value.
@@ -2545,6 +2584,7 @@ public final class ChannelUriStringBuilder
         appendSize(sb, SOCKET_SNDBUF_PARAM_NAME, socketSndbufLength);
         appendSize(sb, SOCKET_RCVBUF_PARAM_NAME, socketRcvbufLength);
         appendParameter(sb, SOCKET_TOS_PARAM_NAME, socketTos);
+        appendParameter(sb, SOURCE_PARAM_NAME, source);
         appendSize(sb, RECEIVER_WINDOW_LENGTH_PARAM_NAME, receiverWindowLength);
         appendParameter(sb, MEDIA_RCV_TIMESTAMP_OFFSET_PARAM_NAME, mediaReceiveTimestampOffset);
         appendParameter(sb, CHANNEL_RECEIVE_TIMESTAMP_OFFSET_PARAM_NAME, channelReceiveTimestampOffset);

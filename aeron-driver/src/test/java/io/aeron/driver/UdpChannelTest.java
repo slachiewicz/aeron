@@ -545,7 +545,6 @@ class UdpChannelTest
             "UDP-127.0.0.1:0-[fe80::5246:5dff:fe73:df06]:20000",
         "NAME_ENDPOINT,224.0.1.1,,,UDP-127.0.0.1:0-224.0.1.1:40124",
         "NAME_ENDPOINT,192.168.1.1,NAME_CONTROL,192.168.1.2,UDP-NAME_CONTROL-NAME_ENDPOINT",
-        "NAME_ENDPOINT,224.0.1.1,NAME_CONTROL,127.0.0.1,UDP-127.0.0.1:0-224.0.1.1:40124",
         "192.168.1.1:40124,192.168.1.1,NAME_CONTROL,192.168.1.2,UDP-NAME_CONTROL-192.168.1.1:40124",
         "192.168.1.1:40124,192.168.1.1,192.168.1.2:40192,192.168.1.2,UDP-192.168.1.2:40192-192.168.1.1:40124",
     })
@@ -717,4 +716,84 @@ class UdpChannelTest
             return matchesSafely;
         }
     }
+
+    @Test
+    void shouldParseSourceSpecificMulticastWithControlAsSource() throws UnknownHostException
+    {
+        final UdpChannel udpChannel = UdpChannel.parse(
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457");
+
+        assertTrue(udpChannel.isMulticast());
+        assertTrue(udpChannel.isSourceSpecific());
+        assertTrue(udpChannel.hasExplicitControl());
+        assertEquals(getByName("127.0.0.1"), udpChannel.sourceAddress());
+        assertEquals(new InetSocketAddress("232.1.1.1", 40456), udpChannel.remoteData());
+        assertEquals(new InetSocketAddress("127.0.0.1", 40457), udpChannel.remoteControl());
+        assertEquals(new InetSocketAddress("127.0.0.1", 40457), udpChannel.localControl());
+        assertEquals(getByName("127.0.0.1"), udpChannel.localData().getAddress());
+        assertNotNull(udpChannel.localInterface());
+        assertEquals("UDP-127.0.0.1:40457-232.1.1.1:40456", udpChannel.canonicalForm());
+    }
+
+    @Test
+    void shouldParseSourceSpecificMulticastWithExplicitSource() throws UnknownHostException
+    {
+        final UdpChannel udpChannel = UdpChannel.parse(
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=127.0.0.2");
+
+        assertTrue(udpChannel.isSourceSpecific());
+        assertEquals(getByName("127.0.0.2"), udpChannel.sourceAddress());
+        assertEquals(new InetSocketAddress("127.0.0.1", 40457), udpChannel.remoteControl());
+        assertEquals("UDP-127.0.0.1:40457-232.1.1.1:40456-127.0.0.2", udpChannel.canonicalForm());
+    }
+
+    @Test
+    void shouldGiveSourceSpecificAndAnySourceMulticastDifferentCanonicalForms()
+    {
+        final UdpChannel anySource = UdpChannel.parse("aeron:udp?endpoint=232.1.1.1:40456|interface=localhost");
+        final UdpChannel sourceSpecific = UdpChannel.parse(
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457");
+
+        assertFalse(anySource.isSourceSpecific());
+        assertNull(anySource.sourceAddress());
+        assertNotEquals(anySource.canonicalForm(), sourceSpecific.canonicalForm());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40456",
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:0",
+        "aeron:udp?endpoint=232.1.1.1:40456|control=0.0.0.0:40457",
+        "aeron:udp?endpoint=232.1.1.1:40456|control=224.0.1.1:40457",
+        "aeron:udp?endpoint=232.1.1.1:40456|control=[::1]:40457",
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|control-mode=dynamic",
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=224.0.1.1",
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=::1",
+        "aeron:udp?endpoint=232.1.1.1:40456|source=127.0.0.1",
+        "aeron:udp?endpoint=127.0.0.1:40456|source=127.0.0.1",
+    })
+    void shouldRejectInvalidSourceSpecificMulticast(final String uri)
+    {
+        assertThrows(InvalidChannelException.class, () -> UdpChannel.parse(uri));
+    }
+
+    @Test
+    void shouldRejectSourceSpecificMulticastWhenControlAndEndpointPortsMatch()
+    {
+        assertThrows(
+            InvalidChannelException.class,
+            () -> UdpChannel.parse("aeron:udp?endpoint=224.0.1.1:40124|control=127.0.0.1:40124|interface=localhost"));
+    }
+
+    @Test
+    void shouldNotMatchTagsWhenSourcesDiffer()
+    {
+        final UdpChannel s1 = UdpChannel.parse(
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=127.0.0.1|tags=1001");
+        final UdpChannel s2 = UdpChannel.parse(
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=127.0.0.2|tags=1001");
+
+        assertThrows(IllegalArgumentException.class, () -> s1.matchesTag(s2, null, null));
+    }
+
 }
