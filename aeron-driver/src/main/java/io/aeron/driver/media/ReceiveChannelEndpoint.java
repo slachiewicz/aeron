@@ -1045,7 +1045,8 @@ public class ReceiveChannelEndpoint extends ReceiveChannelEndpointRhsPadding
         {
             multiRcvDestination.checkForReResolution(this, nowNs, conductorProxy);
         }
-        else if (udpChannel.hasExplicitControl() && (timeOfLastActivityNs + DESTINATION_ADDRESS_TIMEOUT) - nowNs < 0)
+        else if (udpChannel.hasExplicitControl() && !udpChannel.isSourceSpecific() &&
+            (timeOfLastActivityNs + DESTINATION_ADDRESS_TIMEOUT) - nowNs < 0)
         {
             timeOfLastActivityNs = nowNs;
             conductorProxy.reResolveControl(

@@ -508,6 +508,7 @@ int aeron_receiver_channel_endpoint_send_error_frame(
     return bytes_sent;
 }
 
+// The udp_channel is immutable after creation, so it is safe to read on the receiver thread.
 static bool aeron_receive_channel_endpoint_is_from_source(
     aeron_receive_destination_t *destination, struct sockaddr_storage *addr)
 {

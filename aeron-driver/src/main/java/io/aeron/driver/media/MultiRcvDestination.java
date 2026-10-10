@@ -114,7 +114,7 @@ final class MultiRcvDestination
             {
                 final UdpChannel udpChannel = transport.udpChannel();
 
-                if (udpChannel.hasExplicitControl() &&
+                if (udpChannel.hasExplicitControl() && !udpChannel.isSourceSpecific() &&
                     (transport.timeOfLastActivityNs() + DESTINATION_ADDRESS_TIMEOUT) < nowNs)
                 {
                     transport.timeOfLastActivityNs(nowNs);

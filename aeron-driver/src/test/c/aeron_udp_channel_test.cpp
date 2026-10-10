@@ -648,6 +648,23 @@ TEST_F(UdpChannelTest, shouldRejectInvalidSourceSpecificMulticast)
     }
 }
 
+TEST_F(UdpChannelTest, shouldNotMatchTagsWhenSourcesDiffer)
+{
+    aeron_udp_channel_t *s1 = nullptr;
+    aeron_udp_channel_t *s2 = nullptr;
+    const char *uri1 = "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=127.0.0.1|tags=1001";
+    const char *uri2 = "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=127.0.0.2|tags=1001";
+
+    ASSERT_EQ(0, aeron_udp_channel_parse(strlen(uri1), uri1, &m_resolver, &s1, false)) << aeron_errmsg();
+    ASSERT_EQ(0, aeron_udp_channel_parse(strlen(uri2), uri2, &m_resolver, &s2, false)) << aeron_errmsg();
+
+    bool has_match = false;
+    EXPECT_EQ(-1, aeron_udp_channel_matches_tag(s1, s2, nullptr, nullptr, &has_match));
+
+    aeron_udp_channel_delete(s1);
+    aeron_udp_channel_delete(s2);
+}
+
 TEST_F(UdpChannelTest, shouldParseSocketTos)
 {
     const char *uri = "aeron:udp?interface=localhost|endpoint=224.10.9.9:40124|so-tos=184";

@@ -804,6 +804,20 @@ int aeron_udp_channel_matches_tag(
         return -1;
     }
 
+    if (addresses_match && !aeron_udp_channel_is_wildcard(channel) &&
+        channel->is_source_specific != endpoint_channel->is_source_specific)
+    {
+        addresses_match = false;
+    }
+    else if (addresses_match && !aeron_udp_channel_is_wildcard(channel) && channel->is_source_specific &&
+        aeron_sockaddr_storage_cmp(&channel->source_addr, &endpoint_channel->source_addr, &addresses_match) < 0)
+    {
+        *has_match = false;
+
+        AERON_APPEND_ERR("%s", "");
+        return -1;
+    }
+
     if (!addresses_match)
     {
         AERON_SET_ERR(

@@ -187,24 +187,21 @@ static int aeron_udp_channel_transport_bind_source_specific_sender(
     aeron_udp_channel_transport_t *transport,
     struct sockaddr_storage *bind_addr,
     struct sockaddr_storage *multicast_if_addr,
-    struct sockaddr_storage *connect_addr,
     aeron_udp_channel_transport_params_t *params)
 {
     const bool is_ipv6 = AF_INET6 == bind_addr->ss_family;
 
-    if (NULL != connect_addr)
+    // Data must leave from the source address while control is received on the control address, which may differ.
+    if ((transport->recv_fd = aeron_socket(bind_addr->ss_family, SOCK_DGRAM, 0)) < 0)
     {
-        if ((transport->recv_fd = aeron_socket(bind_addr->ss_family, SOCK_DGRAM, 0)) < 0)
-        {
-            AERON_APPEND_ERR("%s", "");
-            return -1;
-        }
+        AERON_APPEND_ERR("%s", "");
+        return -1;
+    }
 
-        if (aeron_bind(transport->fd, (struct sockaddr *)params->source_addr, AERON_ADDR_LEN(params->source_addr)) < 0)
-        {
-            AERON_APPEND_ERR("%s", "source-specific multicast source bind");
-            return -1;
-        }
+    if (aeron_bind(transport->fd, (struct sockaddr *)params->source_addr, AERON_ADDR_LEN(params->source_addr)) < 0)
+    {
+        AERON_APPEND_ERR("%s", "source-specific multicast source bind");
+        return -1;
     }
 
     if (aeron_bind(transport->recv_fd, (struct sockaddr *)bind_addr, AERON_ADDR_LEN(bind_addr)) < 0)
@@ -280,7 +277,7 @@ int aeron_udp_channel_transport_init(
     if (NULL != params->source_addr && !is_multicast)
     {
         if (aeron_udp_channel_transport_bind_source_specific_sender(
-            transport, bind_addr, multicast_if_addr, connect_addr, params) < 0)
+            transport, bind_addr, multicast_if_addr, params) < 0)
         {
             AERON_APPEND_ERR("affinity=%d", affinity);
             goto error;

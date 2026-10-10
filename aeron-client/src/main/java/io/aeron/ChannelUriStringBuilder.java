@@ -1753,7 +1753,7 @@ public final class ChannelUriStringBuilder
     }
 
     /**
-     * Set the source address for a source-specific multicast (SSM) subscription.
+     * Set the source address for a source-specific multicast (SSM) channel.
      *
      * @param source address of the multicast source.
      * @return this for a fluent API.
@@ -1766,7 +1766,7 @@ public final class ChannelUriStringBuilder
     }
 
     /**
-     * Set the source address for a source-specific multicast (SSM) subscription from an existing {@link ChannelUri}.
+     * Set the source address for a source-specific multicast (SSM) channel from an existing {@link ChannelUri}.
      *
      * @param channelUri to read the value from.
      * @return this for a fluent API.
@@ -1778,7 +1778,7 @@ public final class ChannelUriStringBuilder
     }
 
     /**
-     * Get the source address for a source-specific multicast (SSM) subscription.
+     * Get the source address for a source-specific multicast (SSM) channel.
      *
      * @return source address or null if not specified.
      * @see CommonContext#SOURCE_PARAM_NAME

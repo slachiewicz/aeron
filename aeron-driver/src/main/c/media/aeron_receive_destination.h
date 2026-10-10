@@ -64,6 +64,7 @@ inline void aeron_receive_destination_update_last_activity_ns(aeron_receive_dest
 inline bool aeron_receive_destination_re_resolution_required(aeron_receive_destination_t *destination, int64_t now_ns)
 {
     return destination->conductor_fields.udp_channel->has_explicit_control &&
+        !destination->conductor_fields.udp_channel->is_source_specific &&
         now_ns > destination->time_of_last_activity_ns + AERON_RECEIVE_DESTINATION_TIMEOUT_NS;
 }
 

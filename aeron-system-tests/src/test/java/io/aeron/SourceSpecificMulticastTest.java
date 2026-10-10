@@ -36,10 +36,12 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -144,6 +146,25 @@ class SourceSpecificMulticastTest
 
             sendAndReceive(ssmPub, ssmSub);
             sendAndReceive(asmPub, asmSub);
+        }
+    }
+
+    @Test
+    @InterruptAfter(10)
+    void shouldNotConnectToPublicationFromAnotherSource()
+    {
+        final String otherSourceUri = SSM_URI_A + "|source=127.0.0.2";
+
+        try (Publication pub = aeron.addPublication(SSM_URI_A, STREAM_ID);
+            Subscription sub = aeron.addSubscription(otherSourceUri, STREAM_ID))
+        {
+            final long deadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (System.nanoTime() < deadlineNs)
+            {
+                pub.offer(buffer, 0, Integer.BYTES);
+                assertFalse(sub.isConnected());
+                Tests.sleep(10);
+            }
         }
     }
 

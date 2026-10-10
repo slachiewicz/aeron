@@ -419,8 +419,9 @@ public class CommonContext implements Cloneable
     public static final String SOCKET_TOS_PARAM_NAME = "so-tos";
 
     /**
-     * Parameter name for the source address of a source-specific multicast (SSM) subscription. Only valid on a
-     * multicast channel which also has an explicit control address. Defaults to the host of the control address.
+     * Parameter name for the source address of a source-specific multicast (SSM) channel. Only valid on a multicast
+     * channel which also has an explicit control address. Defaults to the host of the control address. Publications
+     * send from it and subscriptions join the group for it only.
      *
      * @see #MDC_CONTROL_PARAM_NAME
      */
