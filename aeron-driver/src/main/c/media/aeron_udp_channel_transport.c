@@ -97,6 +97,125 @@ static int aeron_udp_channel_transport_setup_media_rcv_timestamps(aeron_udp_chan
     return -1;
 }
 
+static int aeron_udp_channel_transport_set_multicast_send_options(
+    aeron_socket_t fd,
+    bool is_ipv6,
+    struct sockaddr_storage *multicast_if_addr,
+    aeron_udp_channel_transport_params_t *params)
+{
+    if (is_ipv6)
+    {
+        if (aeron_setsockopt(
+            fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &params->multicast_if_index, sizeof(params->multicast_if_index)) < 0)
+        {
+            AERON_APPEND_ERR("failed to set IPPROTO_IPV6/IPV6_MULTICAST_IF option to: %u", params->multicast_if_index);
+            return -1;
+        }
+
+        if (params->ttl > 0)
+        {
+            if (aeron_setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &params->ttl, sizeof(params->ttl)) < 0)
+            {
+                AERON_APPEND_ERR(
+                    "failed to set IPPROTO_IPV6/IPV6_MULTICAST_HOPS option to: %" PRIu8, params->ttl);
+                return -1;
+            }
+        }
+    }
+    else
+    {
+        struct sockaddr_in *interface_addr = (struct sockaddr_in *)multicast_if_addr;
+
+        if (aeron_setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &interface_addr->sin_addr, sizeof(struct in_addr)) < 0)
+        {
+            char intr_buf[AERON_NETUTIL_FORMATTED_MAX_LENGTH] = { 0 };
+            inet_ntop(AF_INET, &interface_addr->sin_addr, intr_buf, sizeof(intr_buf));
+            AERON_APPEND_ERR("failed to set IPPROTO_IP/IP_MULTICAST_IF option to: %s", intr_buf);
+            return -1;
+        }
+
+        if (params->ttl > 0)
+        {
+            if (aeron_setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &params->ttl, sizeof(params->ttl)) < 0)
+            {
+                AERON_APPEND_ERR(
+                    "failed to set IPPROTO_IP/IP_MULTICAST_TTL option to: %" PRIu8, params->ttl);
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int aeron_udp_channel_transport_join_source_group(
+    aeron_socket_t fd,
+    struct sockaddr_storage *group_addr,
+    struct sockaddr_storage *source_addr,
+    unsigned int interface_index)
+{
+    struct group_source_req gsr;
+    const int level = AF_INET6 == group_addr->ss_family ? IPPROTO_IPV6 : IPPROTO_IP;
+
+    memset(&gsr, 0, sizeof(gsr));
+    gsr.gsr_interface = interface_index;
+    memcpy(&gsr.gsr_group, group_addr, AERON_ADDR_LEN(group_addr));
+    memcpy(&gsr.gsr_source, source_addr, AERON_ADDR_LEN(source_addr));
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    ((struct sockaddr *)&gsr.gsr_group)->sa_len = (uint8_t)AERON_ADDR_LEN(group_addr);
+    ((struct sockaddr *)&gsr.gsr_source)->sa_len = (uint8_t)AERON_ADDR_LEN(source_addr);
+#endif
+
+    if (aeron_setsockopt(fd, level, MCAST_JOIN_SOURCE_GROUP, &gsr, sizeof(gsr)) < 0)
+    {
+        char group_buf[AERON_NETUTIL_FORMATTED_MAX_LENGTH] = { 0 };
+        char source_buf[AERON_NETUTIL_FORMATTED_MAX_LENGTH] = { 0 };
+        aeron_format_source_identity(group_buf, sizeof(group_buf), group_addr);
+        aeron_format_source_identity(source_buf, sizeof(source_buf), source_addr);
+        AERON_APPEND_ERR(
+            "failed to set MCAST_JOIN_SOURCE_GROUP option to: struct group_source_req{.gsr_interface=%u, .gsr_group=%s, .gsr_source=%s}",
+            interface_index,
+            group_buf,
+            source_buf);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int aeron_udp_channel_transport_bind_source_specific_sender(
+    aeron_udp_channel_transport_t *transport,
+    struct sockaddr_storage *bind_addr,
+    struct sockaddr_storage *multicast_if_addr,
+    struct sockaddr_storage *connect_addr,
+    aeron_udp_channel_transport_params_t *params)
+{
+    const bool is_ipv6 = AF_INET6 == bind_addr->ss_family;
+
+    if (NULL != connect_addr)
+    {
+        if ((transport->recv_fd = aeron_socket(bind_addr->ss_family, SOCK_DGRAM, 0)) < 0)
+        {
+            AERON_APPEND_ERR("%s", "");
+            return -1;
+        }
+
+        if (aeron_bind(transport->fd, (struct sockaddr *)params->source_addr, AERON_ADDR_LEN(params->source_addr)) < 0)
+        {
+            AERON_APPEND_ERR("%s", "source-specific multicast source bind");
+            return -1;
+        }
+    }
+
+    if (aeron_bind(transport->recv_fd, (struct sockaddr *)bind_addr, AERON_ADDR_LEN(bind_addr)) < 0)
+    {
+        AERON_APPEND_ERR("%s", "source-specific multicast control bind");
+        return -1;
+    }
+
+    return aeron_udp_channel_transport_set_multicast_send_options(transport->fd, is_ipv6, multicast_if_addr, params);
+}
+
 int aeron_udp_channel_transport_init(
     aeron_udp_channel_transport_t *transport,
     struct sockaddr_storage *bind_addr,
@@ -158,7 +277,16 @@ int aeron_udp_channel_transport_init(
         }
     }
 
-    if (!is_multicast)
+    if (NULL != params->source_addr && !is_multicast)
+    {
+        if (aeron_udp_channel_transport_bind_source_specific_sender(
+            transport, bind_addr, multicast_if_addr, connect_addr, params) < 0)
+        {
+            AERON_APPEND_ERR("affinity=%d", affinity);
+            goto error;
+        }
+    }
+    else if (!is_multicast)
     {
         if (aeron_bind(transport->recv_fd, (struct sockaddr *)bind_addr, bind_addr_len) < 0)
         {
@@ -229,7 +357,15 @@ int aeron_udp_channel_transport_init(
             memcpy(&mreq.ipv6mr_multiaddr, &in6->sin6_addr, sizeof(in6->sin6_addr));
             mreq.ipv6mr_interface = params->multicast_if_index;
 
-            if (aeron_setsockopt(transport->recv_fd, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq, sizeof(mreq)) < 0)
+            if (NULL != params->source_addr)
+            {
+                if (aeron_udp_channel_transport_join_source_group(
+                    transport->recv_fd, bind_addr, params->source_addr, params->multicast_if_index) < 0)
+                {
+                    goto error;
+                }
+            }
+            else if (aeron_setsockopt(transport->recv_fd, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq, sizeof(mreq)) < 0)
             {
                 char addr_buf[AERON_NETUTIL_FORMATTED_MAX_LENGTH] = { 0 };
                 inet_ntop(AF_INET6, &mreq.ipv6mr_multiaddr, addr_buf, sizeof(addr_buf));
@@ -240,21 +376,10 @@ int aeron_udp_channel_transport_init(
                 goto error;
             }
 
-            if (aeron_setsockopt(
-                transport->fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &params->multicast_if_index, sizeof(params->multicast_if_index)) < 0)
+            if (aeron_udp_channel_transport_set_multicast_send_options(
+                transport->fd, is_ipv6, multicast_if_addr, params) < 0)
             {
-                AERON_APPEND_ERR("failed to set IPPROTO_IPV6/IPV6_MULTICAST_IF option to: %u", params->multicast_if_index);
                 goto error;
-            }
-
-            if (params->ttl > 0)
-            {
-                if (aeron_setsockopt(transport->fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &params->ttl, sizeof(params->ttl)) < 0)
-                {
-                    AERON_APPEND_ERR(
-                        "failed to set IPPROTO_IPV6/IPV6_MULTICAST_HOPS option to: %" PRIu8, params->ttl);
-                    goto error;
-                }
             }
         }
         else
@@ -292,7 +417,15 @@ int aeron_udp_channel_transport_init(
             mreq.imr_multiaddr.s_addr = in4->sin_addr.s_addr;
             mreq.imr_interface.s_addr = interface_addr->sin_addr.s_addr;
 
-            if (aeron_setsockopt(transport->recv_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0)
+            if (NULL != params->source_addr)
+            {
+                if (aeron_udp_channel_transport_join_source_group(
+                    transport->recv_fd, bind_addr, params->source_addr, params->multicast_if_index) < 0)
+                {
+                    goto error;
+                }
+            }
+            else if (aeron_setsockopt(transport->recv_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0)
             {
                 char addr_buf[AERON_NETUTIL_FORMATTED_MAX_LENGTH] = { 0 };
                 char intr_buf[AERON_NETUTIL_FORMATTED_MAX_LENGTH] = { 0 };
@@ -306,23 +439,10 @@ int aeron_udp_channel_transport_init(
                 goto error;
             }
 
-            if (aeron_setsockopt(
-                transport->fd, IPPROTO_IP, IP_MULTICAST_IF, &interface_addr->sin_addr, sizeof(struct in_addr)) < 0)
+            if (aeron_udp_channel_transport_set_multicast_send_options(
+                transport->fd, is_ipv6, multicast_if_addr, params) < 0)
             {
-                char intr_buf[AERON_NETUTIL_FORMATTED_MAX_LENGTH] = { 0 };
-                inet_ntop(AF_INET, &interface_addr->sin_addr, intr_buf, sizeof(intr_buf));
-                AERON_APPEND_ERR("failed to set IPPROTO_IP/IP_MULTICAST_IF option to: %s", intr_buf);
                 goto error;
-            }
-
-            if (params->ttl > 0)
-            {
-                if (aeron_setsockopt(transport->fd, IPPROTO_IP, IP_MULTICAST_TTL, &params->ttl, sizeof(params->ttl)) < 0)
-                {
-                    AERON_APPEND_ERR(
-                        "failed to set IPPROTO_IP/IP_MULTICAST_TTL option to: %" PRIu8, params->ttl);
-                    goto error;
-                }
             }
         }
     }

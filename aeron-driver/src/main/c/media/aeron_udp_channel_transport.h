@@ -40,6 +40,7 @@ struct aeron_udp_channel_transport_params_stct
     unsigned int multicast_if_index;
     uint8_t ttl;
     bool is_media_timestamping;
+    struct sockaddr_storage *source_addr;
 };
 typedef struct aeron_udp_channel_transport_params_stct aeron_udp_channel_transport_params_t;
 

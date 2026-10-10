@@ -508,6 +508,31 @@ int aeron_receiver_channel_endpoint_send_error_frame(
     return bytes_sent;
 }
 
+static bool aeron_receive_channel_endpoint_is_from_source(
+    aeron_receive_destination_t *destination, struct sockaddr_storage *addr)
+{
+    if (NULL == destination || !destination->conductor_fields.udp_channel->is_source_specific)
+    {
+        return true;
+    }
+
+    struct sockaddr_storage *source_addr = &destination->conductor_fields.udp_channel->source_addr;
+    if (source_addr->ss_family != addr->ss_family)
+    {
+        return false;
+    }
+
+    if (AF_INET6 == addr->ss_family)
+    {
+        return 0 == memcmp(
+            &((struct sockaddr_in6 *)source_addr)->sin6_addr,
+            &((struct sockaddr_in6 *)addr)->sin6_addr,
+            sizeof(struct in6_addr));
+    }
+
+    return ((struct sockaddr_in *)source_addr)->sin_addr.s_addr == ((struct sockaddr_in *)addr)->sin_addr.s_addr;
+}
+
 void aeron_receive_channel_endpoint_dispatch(
     aeron_udp_channel_data_paths_t *data_paths,
     aeron_udp_channel_transport_t *transport,
@@ -524,7 +549,7 @@ void aeron_receive_channel_endpoint_dispatch(
     aeron_receive_channel_endpoint_t *endpoint = (aeron_receive_channel_endpoint_t *)endpoint_clientd;
     aeron_receive_destination_t *destination = (aeron_receive_destination_t *)destination_clientd;
 
-    if (!aeron_is_frame_valid(frame_header, length))
+    if (!aeron_is_frame_valid(frame_header, length) || !aeron_receive_channel_endpoint_is_from_source(destination, addr))
     {
         aeron_counter_increment(receiver->invalid_frames_counter);
         return;

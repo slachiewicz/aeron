@@ -418,6 +418,7 @@ int aeron_driver_name_resolver_init(
         0,
         0,
         false,
+        NULL,
     };
 
     if (_driver_resolver->transport_bindings->init_func(

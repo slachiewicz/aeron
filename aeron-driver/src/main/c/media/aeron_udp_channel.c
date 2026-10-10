@@ -273,6 +273,168 @@ int aeron_udp_channel_do_initial_parse(
     return 0;
 }
 
+static uint16_t aeron_udp_channel_port(struct sockaddr_storage *addr)
+{
+    return AF_INET6 == addr->ss_family ?
+        ntohs(((struct sockaddr_in6 *)addr)->sin6_port) : ntohs(((struct sockaddr_in *)addr)->sin_port);
+}
+
+static int aeron_udp_channel_resolve_source(
+    aeron_name_resolver_t *resolver, const char *source_str, struct sockaddr_storage *source_addr)
+{
+    if (aeron_try_parse_ipv4(source_str, source_addr) || aeron_try_parse_ipv6(source_str, source_addr))
+    {
+        return 0;
+    }
+
+    if (resolver->resolve_func(resolver, source_str, AERON_URI_SOURCE_KEY, false, source_addr) < 0)
+    {
+        AERON_APPEND_ERR("unresolved - %s=%s", AERON_URI_SOURCE_KEY, source_str);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int aeron_udp_channel_find_source_interface(
+    struct sockaddr_storage *source_addr, struct sockaddr_storage *interface_addr, unsigned int *interface_index)
+{
+    char source_buffer[AERON_NETUTIL_FORMATTED_MAX_LENGTH];
+    char interface_str[AERON_NETUTIL_FORMATTED_MAX_LENGTH + 8];
+
+    if (AF_INET6 == source_addr->ss_family)
+    {
+        inet_ntop(AF_INET6, &((struct sockaddr_in6 *)source_addr)->sin6_addr, source_buffer, sizeof(source_buffer));
+        snprintf(interface_str, sizeof(interface_str), "[%s]/128", source_buffer);
+    }
+    else
+    {
+        inet_ntop(AF_INET, &((struct sockaddr_in *)source_addr)->sin_addr, source_buffer, sizeof(source_buffer));
+        snprintf(interface_str, sizeof(interface_str), "%s/32", source_buffer);
+    }
+
+    if (aeron_find_interface(source_addr->ss_family, interface_str, interface_addr, interface_index) < 0)
+    {
+        aeron_err_clear();
+        return -1;
+    }
+
+    return 0;
+}
+
+static int aeron_udp_channel_parse_source_specific(
+    aeron_name_resolver_t *resolver,
+    aeron_udp_channel_t *channel,
+    struct sockaddr_storage *endpoint_addr,
+    struct sockaddr_storage *control_addr)
+{
+    struct sockaddr_storage interface_addr;
+    unsigned int interface_index = 0;
+    memset(&interface_addr, 0, sizeof(interface_addr));
+
+    if (AERON_UDP_CHANNEL_CONTROL_MODE_NONE != channel->control_mode)
+    {
+        AERON_SET_ERR(
+            -AERON_ERROR_CODE_INVALID_CHANNEL,
+            "%s is not supported with a multicast endpoint", AERON_UDP_CHANNEL_CONTROL_MODE_KEY);
+        return -1;
+    }
+
+    if (aeron_is_addr_multicast(control_addr) || aeron_is_wildcard_addr(control_addr) ||
+        aeron_is_wildcard_port(control_addr))
+    {
+        AERON_SET_ERR(
+            -AERON_ERROR_CODE_INVALID_CHANNEL,
+            "%s must be a unicast address and port for a multicast endpoint", AERON_UDP_CHANNEL_CONTROL_KEY);
+        return -1;
+    }
+
+    if (control_addr->ss_family != endpoint_addr->ss_family)
+    {
+        AERON_SET_ERR(
+            -AERON_ERROR_CODE_INVALID_CHANNEL,
+            "%s and %s must be the same protocol family", AERON_UDP_CHANNEL_CONTROL_KEY, AERON_UDP_CHANNEL_ENDPOINT_KEY);
+        return -1;
+    }
+
+    if (aeron_udp_channel_port(control_addr) == aeron_udp_channel_port(endpoint_addr))
+    {
+        AERON_SET_ERR(
+            -AERON_ERROR_CODE_INVALID_CHANNEL,
+            "%s port must differ from the multicast %s port",
+            AERON_UDP_CHANNEL_CONTROL_KEY,
+            AERON_UDP_CHANNEL_ENDPOINT_KEY);
+        return -1;
+    }
+
+    const char *source_str = aeron_uri_find_param_value(&channel->uri.params.udp.additional_params, AERON_URI_SOURCE_KEY);
+    if (NULL == source_str)
+    {
+        memcpy(&channel->source_addr, control_addr, AERON_ADDR_LEN(control_addr));
+    }
+    else if (aeron_udp_channel_resolve_source(resolver, source_str, &channel->source_addr) < 0)
+    {
+        return -1;
+    }
+
+    if (aeron_is_addr_multicast(&channel->source_addr) || aeron_is_wildcard_addr(&channel->source_addr) ||
+        channel->source_addr.ss_family != endpoint_addr->ss_family)
+    {
+        AERON_SET_ERR(
+            -AERON_ERROR_CODE_INVALID_CHANNEL,
+            "%s must be a unicast address of the same protocol family as %s",
+            AERON_URI_SOURCE_KEY,
+            AERON_UDP_CHANNEL_ENDPOINT_KEY);
+        return -1;
+    }
+
+    if (AF_INET6 == channel->source_addr.ss_family)
+    {
+        ((struct sockaddr_in6 *)&channel->source_addr)->sin6_port = 0;
+    }
+    else
+    {
+        ((struct sockaddr_in *)&channel->source_addr)->sin_port = 0;
+    }
+
+    if (NULL != channel->uri.params.udp.bind_interface ||
+        aeron_udp_channel_find_source_interface(&channel->source_addr, &interface_addr, &interface_index) < 0)
+    {
+        if (aeron_find_multicast_interface(
+            endpoint_addr->ss_family, channel->uri.params.udp.bind_interface, &interface_addr, &interface_index) < 0)
+        {
+            AERON_APPEND_ERR("%s", "");
+            return -1;
+        }
+    }
+
+    channel->interface_index = interface_index;
+    channel->multicast_ttl = aeron_uri_multicast_ttl(&channel->uri);
+    memcpy(&channel->remote_data, endpoint_addr, AERON_ADDR_LEN(endpoint_addr));
+    memcpy(&channel->remote_control, control_addr, AERON_ADDR_LEN(control_addr));
+    memcpy(&channel->local_control, control_addr, AERON_ADDR_LEN(control_addr));
+    memcpy(&channel->local_data, &interface_addr, AERON_ADDR_LEN(&interface_addr));
+    aeron_uri_udp_canonicalise(
+        channel->canonical_form, sizeof(channel->canonical_form),
+        channel->uri.params.udp.control, control_addr,
+        channel->uri.params.udp.endpoint, endpoint_addr,
+        false,
+        AERON_URI_INVALID_TAG);
+
+    if (NULL != source_str)
+    {
+        size_t length = strlen(channel->canonical_form);
+        snprintf(channel->canonical_form + length, sizeof(channel->canonical_form) - length, "-%s", source_str);
+    }
+
+    channel->canonical_length = strlen(channel->canonical_form);
+    channel->is_multicast = true;
+    channel->is_source_specific = true;
+    channel->has_explicit_control = true;
+
+    return 0;
+}
+
 /* Finish filling out the channel */
 /* This function is designed to be run off an executor thread */
 int aeron_udp_channel_finish_parse(
@@ -291,6 +453,7 @@ int aeron_udp_channel_finish_parse(
     _channel->has_explicit_control = false;
     _channel->control_mode = AERON_UDP_CHANNEL_CONTROL_MODE_NONE;
     _channel->is_multicast = false;
+    _channel->is_source_specific = false;
     _channel->tag_id = AERON_URI_INVALID_TAG;
     _channel->ats_status = AERON_URI_ATS_STATUS_DEFAULT;
     _channel->socket_rcvbuf_length = 0;
@@ -432,7 +595,25 @@ int aeron_udp_channel_finish_parse(
         goto error_cleanup;
     }
 
-    if (aeron_is_addr_multicast(&endpoint_addr))
+    if (NULL != aeron_uri_find_param_value(&_channel->uri.params.udp.additional_params, AERON_URI_SOURCE_KEY) &&
+        (!aeron_is_addr_multicast(&endpoint_addr) || NULL == _channel->uri.params.udp.control))
+    {
+        AERON_SET_ERR(
+            -AERON_ERROR_CODE_INVALID_CHANNEL,
+            "%s requires a multicast endpoint and control",
+            AERON_URI_SOURCE_KEY);
+        goto error_cleanup;
+    }
+
+    if (aeron_is_addr_multicast(&endpoint_addr) && NULL != _channel->uri.params.udp.control)
+    {
+        if (aeron_udp_channel_parse_source_specific(resolver, _channel, &endpoint_addr, &explicit_control_addr) < 0)
+        {
+            AERON_APPEND_ERR("URI: %.*s", (int)_channel->uri_length, _channel->original_uri);
+            goto error_cleanup;
+        }
+    }
+    else if (aeron_is_addr_multicast(&endpoint_addr))
     {
         memcpy(&_channel->remote_data, &endpoint_addr, AERON_ADDR_LEN(&endpoint_addr));
         if (aeron_multicast_control_address(&endpoint_addr, &_channel->remote_control) < 0)

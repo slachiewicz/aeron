@@ -129,12 +129,13 @@ int aeron_send_channel_endpoint_create(
         channel->interface_index,
         0 != channel->multicast_ttl ? channel->multicast_ttl : context->multicast_ttl,
         false,
+        channel->is_source_specific ? &channel->source_addr : NULL,
     };
 
     if (context->udp_channel_transport_bindings->init_func(
         &_endpoint->transport,
         &_endpoint->bind_addr,
-        channel->is_multicast ? &channel->local_control : &channel->remote_control,
+        channel->is_multicast ? &channel->local_data : &channel->remote_control,
         connect_addr,
         &transport_params,
         context,

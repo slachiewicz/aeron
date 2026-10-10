@@ -588,6 +588,66 @@ TEST_F(UdpChannelTest, shouldParseSocketBufferParameters)
     ASSERT_EQ(4096u, m_channel->socket_rcvbuf_length);
 }
 
+TEST_F(UdpChannelTest, shouldParseSourceSpecificMulticastWithControlAsSource)
+{
+    ASSERT_EQ(0, parse_udp_channel("aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457")) << aeron_errmsg();
+
+    EXPECT_TRUE(m_channel->is_multicast);
+    EXPECT_TRUE(m_channel->is_source_specific);
+    EXPECT_TRUE(m_channel->has_explicit_control);
+    EXPECT_STREQ("127.0.0.1", inet_ntop(&m_channel->source_addr));
+    EXPECT_STREQ("232.1.1.1", inet_ntop(&m_channel->remote_data));
+    EXPECT_EQ(40456, port(&m_channel->remote_data));
+    EXPECT_STREQ("127.0.0.1", inet_ntop(&m_channel->remote_control));
+    EXPECT_EQ(40457, port(&m_channel->remote_control));
+    EXPECT_STREQ("127.0.0.1", inet_ntop(&m_channel->local_control));
+    EXPECT_EQ(40457, port(&m_channel->local_control));
+    EXPECT_STREQ("127.0.0.1", inet_ntop(&m_channel->local_data));
+    EXPECT_STREQ("UDP-127.0.0.1:40457-232.1.1.1:40456", m_channel->canonical_form);
+}
+
+TEST_F(UdpChannelTest, shouldParseSourceSpecificMulticastWithExplicitSource)
+{
+    ASSERT_EQ(0, parse_udp_channel(
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=127.0.0.2")) << aeron_errmsg();
+
+    EXPECT_TRUE(m_channel->is_source_specific);
+    EXPECT_STREQ("127.0.0.2", inet_ntop(&m_channel->source_addr));
+    EXPECT_STREQ("127.0.0.1", inet_ntop(&m_channel->remote_control));
+    EXPECT_STREQ("UDP-127.0.0.1:40457-232.1.1.1:40456-127.0.0.2", m_channel->canonical_form);
+}
+
+TEST_F(UdpChannelTest, shouldNotBeSourceSpecificWithoutControl)
+{
+    ASSERT_EQ(0, parse_udp_channel("aeron:udp?endpoint=232.1.1.1:40456|interface=localhost")) << aeron_errmsg();
+
+    EXPECT_TRUE(m_channel->is_multicast);
+    EXPECT_FALSE(m_channel->is_source_specific);
+    EXPECT_FALSE(m_channel->has_explicit_control);
+}
+
+TEST_F(UdpChannelTest, shouldRejectInvalidSourceSpecificMulticast)
+{
+    const char *uris[] =
+        {
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40456",
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:0",
+            "aeron:udp?endpoint=232.1.1.1:40456|control=0.0.0.0:40457",
+            "aeron:udp?endpoint=232.1.1.1:40456|control=224.0.1.1:40457",
+            "aeron:udp?endpoint=232.1.1.1:40456|control=[::1]:40457",
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|control-mode=dynamic",
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=224.0.1.1",
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=::1",
+            "aeron:udp?endpoint=232.1.1.1:40456|source=127.0.0.1",
+            "aeron:udp?endpoint=127.0.0.1:40456|source=127.0.0.1",
+        };
+
+    for (const char *uri : uris)
+    {
+        EXPECT_EQ(-1, parse_udp_channel(uri)) << uri;
+    }
+}
+
 TEST_F(UdpChannelTest, shouldParseSocketTos)
 {
     const char *uri = "aeron:udp?interface=localhost|endpoint=224.10.9.9:40124|so-tos=184";
