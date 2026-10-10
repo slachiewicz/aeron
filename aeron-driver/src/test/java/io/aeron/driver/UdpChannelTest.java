@@ -827,6 +827,31 @@ class UdpChannelTest
                 "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=SOURCE_HOST", resolver));
     }
 
+    @Test
+    void shouldParseSourceSpecificMulticastWithNamedInterface() throws IOException
+    {
+        final NetworkInterface loopback = NetworkInterface.getByInetAddress(getByName("127.0.0.1"));
+        assumeTrue(null != loopback, "127.0.0.1 is not assigned to an interface");
+
+        final UdpChannel udpChannel = UdpChannel.parse(
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|interface={" + loopback.getName() + "}");
+
+        assertTrue(udpChannel.isSourceSpecific());
+        assertEquals(getByName("127.0.0.1"), udpChannel.sourceAddress());
+        assertEquals(loopback, udpChannel.localInterface());
+        assertTrue(loopback.inetAddresses().anyMatch((address) -> address.equals(udpChannel.localData().getAddress())));
+        assertEquals("UDP-127.0.0.1:40457-232.1.1.1:40456", udpChannel.canonicalForm());
+    }
+
+    @Test
+    void shouldRejectSourceSpecificMulticastWithUnknownNamedInterface()
+    {
+        assertThrows(
+            InvalidChannelException.class,
+            () -> UdpChannel.parse(
+                "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|interface={does_not_exist}"));
+    }
+
     private static InetAddress getByNameUnchecked(final String host)
     {
         try

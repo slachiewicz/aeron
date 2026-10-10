@@ -18,6 +18,8 @@
 #include <gmock/gmock.h>
 
 #include <regex>
+#include <string>
+#include <vector>
 
 extern "C"
 {
@@ -676,6 +678,74 @@ TEST_F(UdpChannelTest, shouldRejectUnresolvableSourceSpecificMulticastSource)
 {
     EXPECT_EQ(-1, parse_udp_channel(
         "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=no-such-host.invalid"));
+}
+
+struct loopback_lookup_t
+{
+    std::string name;
+    std::vector<std::string> addresses;
+};
+
+static int find_ipv4_loopback_interface(
+    void *clientd, const char *name, struct sockaddr *addr, struct sockaddr *netmask, unsigned int flags)
+{
+    auto *lookup = static_cast<loopback_lookup_t *>(clientd);
+    if (AF_INET != addr->sa_family)
+    {
+        return 0;
+    }
+
+    char buffer[INET_ADDRSTRLEN] = { 0 };
+    ::inet_ntop(AF_INET, &((struct sockaddr_in *)addr)->sin_addr, buffer, sizeof(buffer));
+    if (0 == strcmp("127.0.0.1", buffer))
+    {
+        lookup->name = name;
+    }
+
+    return 0;
+}
+
+static int collect_ipv4_addresses(
+    void *clientd, const char *name, struct sockaddr *addr, struct sockaddr *netmask, unsigned int flags)
+{
+    auto *lookup = static_cast<loopback_lookup_t *>(clientd);
+    if (AF_INET == addr->sa_family && lookup->name == name)
+    {
+        char buffer[INET_ADDRSTRLEN] = { 0 };
+        ::inet_ntop(AF_INET, &((struct sockaddr_in *)addr)->sin_addr, buffer, sizeof(buffer));
+        lookup->addresses.emplace_back(buffer);
+    }
+
+    return 0;
+}
+
+TEST_F(UdpChannelTest, shouldParseSourceSpecificMulticastWithNamedInterface)
+{
+#if defined(_WIN32)
+    GTEST_SKIP() << "Windows interface names are adapter GUIDs, which contain braces";
+#endif
+    loopback_lookup_t lookup;
+    aeron_lookup_interfaces(find_ipv4_loopback_interface, &lookup);
+    if (lookup.name.empty())
+    {
+        GTEST_SKIP() << "127.0.0.1 is not assigned to an interface";
+    }
+    aeron_lookup_interfaces(collect_ipv4_addresses, &lookup);
+
+    const std::string uri =
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|interface={" + lookup.name + "}";
+    ASSERT_EQ(0, parse_udp_channel(uri.c_str())) << aeron_errmsg();
+
+    EXPECT_TRUE(m_channel->is_source_specific);
+    EXPECT_STREQ("127.0.0.1", inet_ntop(&m_channel->source_addr));
+    EXPECT_THAT(lookup.addresses, testing::Contains(std::string(inet_ntop(&m_channel->local_data))));
+    EXPECT_STREQ("UDP-127.0.0.1:40457-232.1.1.1:40456", m_channel->canonical_form);
+}
+
+TEST_F(UdpChannelTest, shouldRejectSourceSpecificMulticastWithUnknownNamedInterface)
+{
+    EXPECT_EQ(-1, parse_udp_channel(
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|interface={does_not_exist}"));
 }
 
 TEST_F(UdpChannelTest, shouldNotMatchTagsWhenSourcesDiffer)
