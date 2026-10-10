@@ -786,6 +786,60 @@ class UdpChannelTest
     }
 
     @Test
+    void shouldParseSourceSpecificMulticastForIPv6() throws UnknownHostException
+    {
+        final UdpChannel udpChannel = UdpChannel.parse(
+            "aeron:udp?endpoint=[ff3e::8000:1]:40456|control=[::1]:40457");
+
+        assertTrue(udpChannel.isMulticast());
+        assertTrue(udpChannel.isSourceSpecific());
+        assertEquals(StandardProtocolFamily.INET6, udpChannel.protocolFamily());
+        assertEquals(getByName("::1"), udpChannel.sourceAddress());
+        assertEquals(new InetSocketAddress("::1", 40457), udpChannel.remoteControl());
+        assertEquals(new InetSocketAddress("ff3e::8000:1", 40456), udpChannel.remoteData());
+        assertEquals("UDP-[::1]:40457-[ff3e::8000:1]:40456", udpChannel.canonicalForm());
+    }
+
+    @Test
+    void shouldResolveSourceSpecificMulticastSourceWithNameResolver() throws UnknownHostException
+    {
+        final NameResolver resolver = (name, uriParamName, isReResolution) ->
+            "SOURCE_HOST".equals(name) ? getByNameUnchecked("127.0.0.2") :
+            DefaultNameResolver.INSTANCE.resolve(name, uriParamName, isReResolution);
+
+        final UdpChannel udpChannel = UdpChannel.parse(
+            "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=SOURCE_HOST", resolver);
+
+        assertEquals(getByName("127.0.0.2"), udpChannel.sourceAddress());
+        assertEquals("UDP-127.0.0.1:40457-232.1.1.1:40456-SOURCE_HOST", udpChannel.canonicalForm());
+    }
+
+    @Test
+    void shouldRejectUnresolvableSourceSpecificMulticastSource()
+    {
+        final NameResolver resolver = (name, uriParamName, isReResolution) ->
+            "SOURCE_HOST".equals(name) ?
+            null : DefaultNameResolver.INSTANCE.resolve(name, uriParamName, isReResolution);
+
+        assertThrows(
+            InvalidChannelException.class,
+            () -> UdpChannel.parse(
+                "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=SOURCE_HOST", resolver));
+    }
+
+    private static InetAddress getByNameUnchecked(final String host)
+    {
+        try
+        {
+            return getByName(host);
+        }
+        catch (final UnknownHostException ex)
+        {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    @Test
     void shouldNotMatchTagsWhenSourcesDiffer()
     {
         final UdpChannel s1 = UdpChannel.parse(

@@ -168,6 +168,79 @@ class SourceSpecificMulticastTest
         }
     }
 
+    @Test
+    @InterruptAfter(10)
+    void shouldReceiveFromSourceSpecificAndUnicastDestinations()
+    {
+        final String unicastUri = "aeron:udp?endpoint=127.0.0.1:20210";
+
+        try (Subscription sub = aeron.addSubscription("aeron:udp?control-mode=manual", STREAM_ID);
+            Publication ssmPub = aeron.addPublication(SSM_URI_A, STREAM_ID);
+            Publication unicastPub = aeron.addPublication(unicastUri, STREAM_ID))
+        {
+            sub.addDestination(SSM_URI_A);
+            sub.addDestination(unicastUri);
+
+            Tests.awaitConnected(ssmPub);
+            Tests.awaitConnected(unicastPub);
+            while (sub.imageCount() < 2)
+            {
+                Tests.yield();
+            }
+
+            sendAndReceive(ssmPub, sub);
+            sendAndReceive(unicastPub, sub);
+        }
+    }
+
+    @Test
+    @InterruptAfter(20)
+    void shouldReconnectWhenPublicationIsRecreated()
+    {
+        try (Subscription sub = aeron.addSubscription(SSM_URI_A, STREAM_ID))
+        {
+            try (Publication pub = aeron.addPublication(SSM_URI_A, STREAM_ID))
+            {
+                Tests.awaitConnected(pub);
+                Tests.awaitConnected(sub);
+                sendAndReceive(pub, sub);
+            }
+
+            while (sub.isConnected())
+            {
+                Tests.yield();
+            }
+
+            try (Publication pub = aeron.addPublication(SSM_URI_A, STREAM_ID))
+            {
+                Tests.awaitConnected(pub);
+                Tests.awaitConnected(sub);
+                sendAndReceive(pub, sub);
+            }
+        }
+    }
+
+    @Test
+    @InterruptAfter(10)
+    void shouldConnectAndExchangeMessagesOverIPv6() throws Exception
+    {
+        assumeTrue(
+            null != NetworkInterface.getByInetAddress(InetAddress.getByName("::1")), "::1 is not a local address");
+        assumeFalse(
+            !TestMediaDriver.shouldRunCMediaDriver() && OS.current() == OS.MAC,
+            "the JDK does not support IPv6 source-specific multicast on macOS");
+
+        final String uri = "aeron:udp?endpoint=[ff3e::8000:1]:20220|control=[::1]:20221";
+
+        try (Publication pub = aeron.addPublication(uri, STREAM_ID);
+            Subscription sub = aeron.addSubscription(uri, STREAM_ID))
+        {
+            Tests.awaitConnected(pub);
+            Tests.awaitConnected(sub);
+            sendAndReceive(pub, sub);
+        }
+    }
+
     private void sendAndReceive(final Publication pub, final Subscription sub)
     {
         buffer.putInt(0, pub.sessionId());

@@ -648,6 +648,36 @@ TEST_F(UdpChannelTest, shouldRejectInvalidSourceSpecificMulticast)
     }
 }
 
+TEST_F(UdpChannelTest, shouldParseSourceSpecificMulticastForIPv6)
+{
+    ASSERT_EQ(0, parse_udp_channel("aeron:udp?endpoint=[ff3e::8000:1]:40456|control=[::1]:40457")) << aeron_errmsg();
+
+    EXPECT_TRUE(m_channel->is_multicast);
+    EXPECT_TRUE(m_channel->is_source_specific);
+    EXPECT_EQ(AF_INET6, m_channel->source_addr.ss_family);
+    EXPECT_STREQ("::1", inet_ntop(&m_channel->source_addr));
+    EXPECT_STREQ("::1", inet_ntop(&m_channel->remote_control));
+    EXPECT_EQ(40457, port(&m_channel->remote_control));
+    EXPECT_STREQ("ff3e::8000:1", inet_ntop(&m_channel->remote_data));
+    EXPECT_STREQ("UDP-[::1]:40457-[ff3e::8000:1]:40456", m_channel->canonical_form);
+}
+
+TEST_F(UdpChannelTest, shouldResolveSourceSpecificMulticastSourceByHostName)
+{
+    ASSERT_EQ(0, parse_udp_channel(
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=localhost")) << aeron_errmsg();
+
+    EXPECT_TRUE(m_channel->is_source_specific);
+    EXPECT_STREQ("127.0.0.1", inet_ntop(&m_channel->source_addr));
+    EXPECT_STREQ("UDP-127.0.0.1:40457-232.1.1.1:40456-localhost", m_channel->canonical_form);
+}
+
+TEST_F(UdpChannelTest, shouldRejectUnresolvableSourceSpecificMulticastSource)
+{
+    EXPECT_EQ(-1, parse_udp_channel(
+        "aeron:udp?endpoint=232.1.1.1:40456|control=127.0.0.1:40457|source=no-such-host.invalid"));
+}
+
 TEST_F(UdpChannelTest, shouldNotMatchTagsWhenSourcesDiffer)
 {
     aeron_udp_channel_t *s1 = nullptr;
